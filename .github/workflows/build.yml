@@ -1,0 +1,87 @@
+name: Build Android APK (Buildozer)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    # ================= CHECKOUT =================
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # ================= PYTHON =================
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    # ================= SYSTEM DEPS =================
+    - name: Install system dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y \
+          git zip unzip openjdk-17-jdk \
+          python3-pip autoconf libtool pkg-config \
+          zlib1g-dev libncurses5 libncurses5-dev \
+          libffi-dev libssl-dev cmake
+
+    # ================= BUILDOZER =================
+    - name: Install Buildozer
+      run: |
+        python -m pip install --upgrade pip
+        pip install buildozer cython==0.29.36
+
+    # ================= ANDROID SDK + NDK 23 =================
+    - name: Install Android SDK + Build-Tools + NDK 23
+      run: |
+        export ANDROID_SDK_ROOT=$HOME/.buildozer/android/platform/android-sdk
+        mkdir -p $ANDROID_SDK_ROOT
+        mkdir -p ~/.android
+        echo "count=0" > ~/.android/repositories.cfg
+
+        # Download cmdline-tools
+        curl -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
+        unzip -q cmdline-tools.zip
+        mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
+        mv cmdline-tools/* $ANDROID_SDK_ROOT/cmdline-tools/latest/
+
+        # Legacy tools path for Buildozer
+        mkdir -p $ANDROID_SDK_ROOT/tools/bin
+        ln -sf $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
+               $ANDROID_SDK_ROOT/tools/bin/sdkmanager
+
+        export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH
+
+        # Accept licenses
+        yes | sdkmanager --licenses
+
+        # Install required SDK components
+        sdkmanager \
+          "platform-tools" \
+          "platforms;android-31" \
+          "build-tools;30.0.3" \
+          "ndk;23.1.7779620"
+
+        # Remove any other NDK versions (force Buildozer to use NDK 23)
+        rm -rf $ANDROID_SDK_ROOT/ndk/* || true
+        ln -s $ANDROID_SDK_ROOT/ndk/23.1.7779620 $ANDROID_SDK_ROOT/ndk-bundle
+
+    # ================= BUILD APK =================
+    - name: Build APK (debug unsigned)
+      env:
+        ANDROID_SDK_ROOT: ${{ runner.home }}/.buildozer/android/platform/android-sdk
+        ANDROID_HOME: ${{ runner.home }}/.buildozer/android/platform/android-sdk
+      run: |
+        buildozer -v android debug
+
+    # ================= UPLOAD ARTIFACT =================
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: debug-apk
+        path: bin/*.apk
